@@ -1,0 +1,1 @@
+Given information about each transaction on a market, form candles using hadoop.
