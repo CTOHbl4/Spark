@@ -1,0 +1,191 @@
+# .env is created dinamically in run.sh.
+
+networks:
+  kafka-spark:
+    name: kafka-spark
+    driver: bridge
+
+volumes:
+  timers:
+    driver: local
+
+services:
+  # Create a cluster with two brokers for input data.
+  kafka1:
+    image: docker.io/bitnami/kafka
+    container_name: kafka1
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_BROKER_ID=0
+      - KAFKA_CFG_NODE_ID=0
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      # The only bootstrap server.
+      # If kafka2 is unavailable, this does not effect the executability.
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka1:9094
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_KRAFT_CLUSTER_ID=clusterid
+    networks:
+      - kafka-spark
+
+  kafka2:
+    image: docker.io/bitnami/kafka
+    container_name: kafka2
+    ports:
+      - "9096:9096"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_NODE_ID=1
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      # Only the broker role.
+      - KAFKA_CFG_PROCESS_ROLES=broker
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9096
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka1:9094
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_KRAFT_CLUSTER_ID=clusterid
+    networks:
+      - kafka-spark
+
+  # One bootstrap server for output.
+  kafka_output:
+    image: docker.io/bitnami/kafka
+    container_name: kafka_output
+    ports:
+      - "9093:9093"
+    environment:
+      - KAFKA_BROKER_ID=0
+      - KAFKA_CFG_NODE_ID=0
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9093,CONTROLLER://:9095
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka_output:9095
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+    networks:
+      - kafka-spark
+    
+  spark-master:
+    build:
+      dockerfile: ./spark-streaming/Dockerfile
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    container_name: spark-master
+    networks:
+      - kafka-spark
+
+  # Three workers.
+  spark-worker-1:
+    image: docker.io/bitnami/spark
+    container_name: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    networks:
+      - kafka-spark
+
+  spark-worker-2:
+    image: docker.io/bitnami/spark
+    container_name: spark-worker-2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    networks:
+      - kafka-spark
+
+  spark-worker-3:
+    image: docker.io/bitnami/spark
+    container_name: spark-worker-3
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    networks:
+      - kafka-spark
+
+  # Producers.
+  producer-entertainment:
+    container_name: producer-entertainment
+    build:
+      dockerfile: ./producers/producer-entertainment/Dockerfile
+    command: python ./entertainment.py ${NUM_PARTITIONS}
+    networks:
+      - kafka-spark
+  
+  producer-fuel:
+    container_name: producer-fuel
+    build:
+      dockerfile: ./producers/producer-fuel/Dockerfile
+    command: python ./fuel.py ${NUM_PARTITIONS}
+    networks:
+      - kafka-spark
+
+  producer-taxes:
+    container_name: producer-taxes
+    build:
+      dockerfile: ./producers/producer-taxes/Dockerfile
+    command: python ./taxes.py ${NUM_PARTITIONS}
+    networks:
+      - kafka-spark
+
+  producer-shopping:
+    container_name: producer-shopping
+    build:
+      dockerfile: ./producers/producer-shopping/Dockerfile
+    command: python ./shopping.py ${NUM_PARTITIONS}
+    networks:
+      - kafka-spark
+
+  python-consumer:
+    container_name: python-consumer
+    build:
+      dockerfile: ./consumer/Dockerfile
+    volumes:
+      - "timers:/vol"
+    command: python consumer.py --num_brokers ${NUM_BROKERS} --num_partitions ${NUM_PARTITIONS} --num_workers ${NUM_WORKERS}
+    networks:
+      - kafka-spark
+
+  kafka-ui-input:
+    image: provectuslabs/kafka-ui:latest
+    hostname: kafka-ui
+    container_name: kafka_ui-input
+    ports:
+    - "8082:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kafka-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092
+    networks:
+      - kafka-spark
+  
+  kafka-ui-output:
+    image: provectuslabs/kafka-ui:latest
+    hostname: kafka-ui
+    container_name: kafka_ui-output
+    ports:
+    - "8083:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kafka-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka_output:9093
+    networks:
+      - kafka-spark
